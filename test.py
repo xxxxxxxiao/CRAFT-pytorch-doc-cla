@@ -48,7 +48,7 @@ parser.add_argument('--text_threshold', default=0.7, type=float, help='text conf
 parser.add_argument('--low_text', default=0.4, type=float, help='text low-bound score')
 parser.add_argument('--link_threshold', default=0.4, type=float, help='link confidence threshold')
 parser.add_argument('--cuda', default=True, type=str2bool, help='Use cuda for inference')
-parser.add_argument('--canvas_size', default=1280, type=int, help='image size for inference')
+parser.add_argument('--canvas_size', default=640, type=int, help='image size for inference')
 parser.add_argument('--mag_ratio', default=1.5, type=float, help='image magnification ratio')
 parser.add_argument('--poly', default=False, action='store_true', help='enable polygon type')
 parser.add_argument('--show_time', default=False, action='store_true', help='show processing time')
@@ -113,7 +113,7 @@ def test_net(net, image, text_threshold, link_threshold, low_text, cuda, poly, r
     render_img = np.hstack((render_img, score_link))
     ret_score_text = imgproc.cvt2HeatmapImg(render_img)
 
-    if args.show_time : print("\ninfer/postproc time : {:.3f}/{:.3f}".format(t0, t1))
+    if args.show_time : print("\ninfer/postproc time : {:.3f}/{:.3f}".format(t0, t1), 'Total time:', t0+t1)
 
     return boxes, polys, ret_score_text
 
@@ -150,22 +150,55 @@ if __name__ == '__main__':
             refine_net.load_state_dict(copyStateDict(torch.load(args.refiner_model, map_location='cpu')))
 
         refine_net.eval()
-        args.poly = True
+        #args.poly = True
 
     t = time.time()
-
+    i = 0
     # load data
     for k, image_path in enumerate(image_list):
         print("Test image {:d}/{:d}: {:s}".format(k+1, len(image_list), image_path), end='\r')
         image = imgproc.loadImage(image_path)
-
+        h, w, c = image.shape
+        img = image[0:int(h/2), int(w/5):int(w*4/5)]
+        #print(img.shape)
+        B_channel,G_channel,R_channel=cv2.split(img)
+        #_,RedThresh = cv2.threshold(R_channel,80,255,cv2.THRESH_BINARY)
+        #_,RedThresh = cv2.threshold(R_channel,100,255,cv2.THRESH_OTSU)
+        #img = np.array([B_channel, G_channel, RedThresh]).transpose((1,2,0))
+        #print('SSS#######SS', img.shape)
+        #img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        #cv2.imwrite('ttttt.jpg', R_channel)
+        #sys.exit()
+        #img = cv2.cvtColor(RedThresh, cv2.COLOR_GRAY2RGB)
+        image = cv2.cvtColor(R_channel, cv2.COLOR_GRAY2RGB)
         bboxes, polys, score_text = test_net(net, image, args.text_threshold, args.link_threshold, args.low_text, args.cuda, args.poly, refine_net)
-
+        sub = np.array([[int(w/5), 0],[int(w/5), 0],[int(w/5), 0],[int(w/5), 0]])
+        # for i in range(len(polys)):
+        #     polys[i] = polys[i] + sub
         # save score text
-        filename, file_ext = os.path.splitext(os.path.basename(image_path))
-        mask_file = result_folder + "/res_" + filename + '_mask.jpg'
-        cv2.imwrite(mask_file, score_text)
+        # filename, file_ext = os.path.splitext(os.path.basename(image_path))
+        # mask_file = result_folder + "/res_" + filename + '_mask.jpg'
+        # cv2.imwrite(mask_file, score_text)
+        output_image = []
 
-        file_utils.saveResult(image_path, image[:,:,::-1], polys, dirname=result_folder)
+        #print('@@@@@@@@@@@@@@@@@', len(bboxes))
+        for box in bboxes:
+            lt, rt, rb, lb = box
+            width = np.linalg.norm(rt - lt)
+            height = np.linalg.norm(lb - lt)
+
+            target = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
+            
+            M = cv2.getPerspectiveTransform(box, target)
+            # apply transformation
+            image_to_crop = np.array(image)
+            dst = cv2.warpPerspective(image_to_crop, M, (width, height))
+            output_image.append(dst)
+        if output_image:
+            for line in output_image:
+                cv2.imwrite('result_title/' + 'a'+str(i)+'.jpg', line)
+                i += 1
+
+        #file_utils.saveResult(image_path, image[:,:,::-1], polys, dirname=result_folder)
 
     print("elapsed time : {}s".format(time.time() - t))
